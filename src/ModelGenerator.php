@@ -65,12 +65,13 @@ class ModelGenerator
     {
         $eloquent = '';
         foreach ($tableKeys as $tableKey) {
-            if ($relation->foreign_key == $tableKey->Column_name) {
+            // dd($tableKey);
+            if ($relation->foreign_key == $tableKey->column_names) {
                 $eloquent = 'hasMany';
 
-                if ($tableKey->Key_name == 'PRIMARY') {
+                if ($tableKey->key_name == 'PRIMARY') {
                     $eloquent = 'hasOne';
-                } elseif ($tableKey->Non_unique == 0 && $tableKey->Seq_in_index == 1) {
+                } elseif ($tableKey->is_unique == 0 && $tableKey->seq_in_index == 1) {
                     $eloquent = 'hasOne';
                 }
             }
@@ -146,15 +147,42 @@ class ModelGenerator
     {
         $db = DB::getDatabaseName();
         $sql = <<<SQL
-SELECT TABLE_NAME ref_table, COLUMN_NAME foreign_key, REFERENCED_COLUMN_NAME local_key, '1' ref
-  FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
-  WHERE REFERENCED_TABLE_NAME = '$this->table' AND TABLE_SCHEMA = '$db'
-UNION
-SELECT REFERENCED_TABLE_NAME ref_table, REFERENCED_COLUMN_NAME foreign_key, COLUMN_NAME local_key, '0' ref
-  FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
-  WHERE TABLE_NAME = '$this->table' AND TABLE_SCHEMA = '$db' AND REFERENCED_TABLE_NAME IS NOT NULL
+WITH fk_constraints AS (
+    SELECT
+        kcu.table_name,
+        kcu.column_name,
+        ccu.table_name AS referenced_table_name,
+        ccu.column_name AS referenced_column_name
+    FROM information_schema.key_column_usage AS kcu
+    JOIN information_schema.table_constraints AS tc
+        ON tc.constraint_name = kcu.constraint_name
+       AND tc.table_schema = kcu.table_schema
+       AND tc.constraint_type = 'FOREIGN KEY'
+    JOIN information_schema.constraint_column_usage AS ccu
+        ON ccu.constraint_name = tc.constraint_name
+       AND ccu.table_schema = tc.table_schema
+    WHERE kcu.table_schema = 'public'
+)
+SELECT
+    referenced_table_name AS ref_table,
+    column_name AS foreign_key,
+    referenced_column_name AS local_key,
+    '1' AS ref
+FROM fk_constraints
+WHERE referenced_table_name = '$this->table'
 
-ORDER BY ref_table ASC
+UNION
+
+SELECT
+    referenced_table_name AS ref_table,
+    referenced_column_name AS foreign_key,
+    column_name AS local_key,
+    '0' AS ref
+FROM fk_constraints
+WHERE table_name = '$this->table'
+  AND referenced_table_name IS NOT NULL
+
+ORDER BY ref_table ASC;
 SQL;
 
         return DB::select($sql);
@@ -169,6 +197,25 @@ SQL;
      */
     private function _getTableKeys($table)
     {
-        return DB::select("SHOW KEYS FROM {$table}");
+        $sql = <<<SQL
+        SELECT
+            i.relname AS key_name,
+            ix.indisunique AS is_unique,
+            ix.indisprimary AS is_primary,
+            array_to_string(array_agg(a.attname ORDER BY a.attnum), ', ') AS column_names
+        FROM
+            pg_class t
+            JOIN pg_index ix ON t.oid = ix.indrelid
+            JOIN pg_class i ON i.oid = ix.indexrelid
+            JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey)
+        WHERE
+            t.relkind = 'r'
+            AND t.relname = '{$table}'
+        GROUP BY
+            i.relname, ix.indisunique, ix.indisprimary
+        ORDER BY
+            i.relname;
+        SQL;
+        return DB::select($sql);
     }
 }

@@ -364,7 +364,7 @@ abstract class GeneratorCommand extends Command
     protected function getColumns()
     {
         if (empty($this->tableColumns)) {
-            $this->tableColumns = DB::select('SHOW COLUMNS FROM ' . $this->table);
+            $this->tableColumns = DB::select('SELECT column_name as Field, data_type, is_nullable as Null FROM information_schema.columns WHERE table_name = \''. $this->table.'\'');
         }
 
         return $this->tableColumns;
@@ -379,7 +379,7 @@ abstract class GeneratorCommand extends Command
         $columns = [];
 
         foreach ($this->getColumns() as $column) {
-            $columns[] = $column->Field;
+            $columns[] = $column->field;
         }
 
         return array_filter($columns, function ($value) use ($unwanted) {
@@ -397,15 +397,16 @@ abstract class GeneratorCommand extends Command
         $properties = '*';
         $rulesArray = [];
         $softDeletesNamespace = $softDeletes = '';
-
         foreach ($this->getColumns() as $value) {
-            $properties .= "\n * @property $$value->Field";
+        // dd($value->field);
 
-            if ($value->Null == 'NO') {
-                $rulesArray[$value->Field] = 'required';
+            $properties .= "\n * @property $$value->field";
+
+            if ($value->null == 'NO') {
+                $rulesArray[$value->field] = 'required';
             }
 
-            if ($value->Field == 'deleted_at') {
+            if ($value->field == 'deleted_at') {
                 $softDeletesNamespace = "use Illuminate\Database\Eloquent\SoftDeletes;\n";
                 $softDeletes = "use SoftDeletes;\n";
             }
